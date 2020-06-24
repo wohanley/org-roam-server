@@ -406,22 +406,22 @@
 
           var currentNode;
           var preview = false;
+          var currentBufferSource;
 
-          var currentBuffer;
-          var oldCurrentBufferData = "";
-          function setCurrentBufferSource () {
-              currentBuffer = new EventSource(`/current-buffer-data?token=${token}`);
-              currentBuffer.onmessage = function (event) {
-                  if (oldCurrentBufferData !== event.data) {
-                      currentNode = event.data;
-                      oldCurrentBufferData = event.data;
+          function reconnectCurrentBufferSocket () {
+              if (currentBufferSource) currentBufferSource.close();
+              currentBufferSource = new WebSocket(`ws://${window.location.host}/current-buffer-data?token=${token}`);
+              currentBufferSource.onmessage = function (message) {
+                  var buffer = message.data;
+                  if (currentNode !== buffer) {
+                      currentNode = buffer;
                       if ($("#buffer-network").css("display") === "block") {
                           drawBufferNetwork();
                       }
                   }
               }
           }
-          setCurrentBufferSource();
+          reconnectCurrentBufferSocket();
 
           function debugFunction() {
           }
@@ -432,27 +432,19 @@
 
           var roamData;
           var roamSource;
-          function reload() {
-              $.get(`/roam-data?force=1&token=${token}`, function(data, status){
-                  console.log(`Connection to /roam-data: ${status}`);
-                  roamData = JSON.parse(data.substring(data.indexOf(':') + 1));
+          function reconnectRoamDataSocket() {
+              if (roamSource) roamSource.close();
+              roamSource = new WebSocket(`ws://${window.location.host}/roam-data?token=${token}`);
+              roamSource.onmessage = function (message) {
+                  roamData = JSON.parse(message.data);
                   update();
-
-                  roamSource = new EventSource(`/roam-data?token=${token}`);
-                  roamSource.onmessage = function (event) {
-                      var parsed_data = JSON.parse(event.data);
-                      roamData = parsed_data;
-                      update();
-                  }
-              });
+              };
           }
-          reload();
+          reconnectRoamDataSocket();
 
           $("#reload-button").click(function() {
-              roamSource.close()
-              reload();
-              currentBuffer.close()
-              setCurrentBufferSource();
+              reconnectRoamDataSocket();
+              reconnectCurrentBufferSocket();
           });
 
           function update () {

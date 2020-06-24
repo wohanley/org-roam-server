@@ -37,7 +37,7 @@
 (require 'url)
 
 (require 's)
-(require 'simple-httpd)
+(require 'web-server)
 
 (require 'org)
 
@@ -57,11 +57,10 @@
 (defvar org-roam-server-token)
 
 (defvar org-roam-server-root
-  (concat (file-name-directory
+  (file-name-directory
            (file-truename (or
                            load-file-name
-                           buffer-file-name)))
-          "."))
+                           buffer-file-name))))
 
 (defgroup org-roam-server nil
   "org-roam-server customizable variables."
@@ -143,41 +142,42 @@ or { \"physics\": { \"enabled\": false } }"
          (if (< x 10) (+ x ?0) (+ x (- ?a 10))))))
     (buffer-string)))
 
-(defun org-roam-server-html-servlet (file)
-  "Export the FILE to HTML and create a servlet for it."
-  `(defservlet* ,(intern (concat (org-roam--path-to-slug file) ".html")) text/html (token)
-     (if org-roam-server-authenticate
-         (if (not (string= org-roam-server-token token))
-             (httpd-error httpd-current-proc 403)))
-     (let ((html-string))
-       (with-temp-buffer
-         (setq-local org-export-with-sub-superscripts nil)
-         (setq-local org-html-style-default org-roam-server-export-style)
-         (insert-file-contents ,file)
-         ;; Handle images
-         (if org-roam-server-export-inline-images
-             (let* ((file-string (buffer-string))
-                    (matches (s-match-strings-all "\\[\\[\\(file:\\)\\(.*\\.\\(png\\|jpg\\|jpeg\\|gif\\|svg\\)\\)\\]\\(\\[.*\\]\\)?\\]" file-string)))
-               (dolist (match matches)
-                 (let ((path (elt match 2))
-                       (link (elt match 0)))
-                   (unless (file-name-absolute-p path)
-                     (setq path (concat (file-name-directory ,file) path)))
-                   (setq path (file-truename path))
-                   (if (file-exists-p path)
-                       (setq file-string
-                             (s-replace link (format "[[image:%s]]" path) file-string)))))
-               (erase-buffer)
-               (insert file-string)))
-         (setq html-string (org-export-as 'html)))
-       (insert html-string))))
+;; (defun org-roam-server-html-servlet (file)
+;;   "Export the FILE to HTML and create a servlet for it."
+;;   `(defservlet* ,(intern (concat (org-roam--path-to-slug file) ".html")) text/html (token)
+;;      (if org-roam-server-authenticate
+;;          (if (not (string= org-roam-server-token token))
+;;              (httpd-error httpd-current-proc 403)))
+;;      (let ((html-string))
+;;        (with-temp-buffer
+;;          (setq-local org-export-with-sub-superscripts nil)
+;;          (setq-local org-html-style-default org-roam-server-export-style)
+;;          (insert-file-contents ,file)
+;;          ;; Handle images
+;;          (if org-roam-server-export-inline-images
+;;              (let* ((file-string (buffer-string))
+;;                     (matches (s-match-strings-all "\\[\\[\\(file:\\)\\(.*\\.\\(png\\|jpg\\|jpeg\\|gif\\|svg\\)\\)\\]\\(\\[.*\\]\\)?\\]" file-string)))
+;;                (dolist (match matches)
+;;                  (let ((path (elt match 2))
+;;                        (link (elt match 0)))
+;;                    (unless (file-name-absolute-p path)
+;;                      (setq path (concat (file-name-directory ,file) path)))
+;;                    (setq path (file-truename path))
+;;                    (if (file-exists-p path)
+;;                        (setq file-string
+;;                              (s-replace link (format "[[image:%s]]" path) file-string)))))
+;;                (erase-buffer)
+;;                (insert file-string)))
+;;          (setq html-string (org-export-as 'html)))
+;;        (insert html-string))))
 
 (defun org-roam-server-capture-servlet ()
   "Create a servlet for the recently captured `org-roam` file.
 This is added as a hook to `org-capture-after-finalize-hook'."
-  (when (and (not org-note-abort))
-    (if-let ((file (org-roam-capture--get :file-path)))
-        (eval (org-roam-server-html-servlet file)))))
+  ;; (when (and (not org-note-abort))
+  ;;   (if-let ((file (org-roam-capture--get :file-path)))
+  ;;       (eval (org-roam-server-html-servlet file))))
+  )
 
 (defun org-roam-server-visjs-json (node-query)
   "Convert `org-roam` NODE-QUERY db query to the visjs json format."
@@ -253,14 +253,14 @@ DESCRIPTION is the shown attribute to the user."
                link desc))
       (_ link))))
 
-(defun org-roam-server-inline-image-servlet (link)
-  "Create servlet in the server for the given image LINK."
-  (let ((ext (cadr (s-match (cdar org-html-inline-image-rules) link))))
-    `(defservlet* ,(intern (secure-hash 'sha256 link)) ,(httpd-get-mime ext) (token)
-       (if org-roam-server-authenticate
-           (if (not (string= org-roam-server-token token))
-               (httpd-error httpd-current-proc 403)))
-       (insert-file-contents ,link))))
+;; (defun org-roam-server-inline-image-servlet (link)
+;;   "Create servlet in the server for the given image LINK."
+;;   (let ((ext (cadr (s-match (cdar org-html-inline-image-rules) link))))
+;;     `(defservlet* ,(intern (secure-hash 'sha256 link)) ,(httpd-get-mime ext) (token)
+;;        (if org-roam-server-authenticate
+;;            (if (not (string= org-roam-server-token token))
+;;                (httpd-error httpd-current-proc 403)))
+;;        (insert-file-contents ,link))))
 
 (defun org-roam-server-export-file-id (link description format)
   "Append token to the file links.
@@ -325,25 +325,36 @@ DESCRIPTION is the shown attribute to the user if the image is not rendered."
     (org-link-set-parameters "server" :export #'org-roam-server-export-server-id)
     (org-link-set-parameters "file" :export #'org-roam-server-export-file-id)
     (org-link-set-parameters "image" :export #'org-roam-server-export-image-id)
-    (setq-local httpd-port org-roam-server-port)
-    (setq-local httpd-host org-roam-server-host)
-    (setq httpd-root org-roam-server-root)
-    (httpd-start)
-    (let ((node-query `[:select [file titles] :from titles
-                                ,@(org-roam-graph--expand-matcher 'file t)]))
-      (org-roam--with-temp-buffer nil
-        (let ((nodes (org-roam-db-query node-query)))
-          (dotimes (idx (length nodes))
-            (let ((file (xml-escape-string (car (elt nodes idx)))))
-              (if (org-roam--org-roam-file-p file)
-                  (eval (org-roam-server-html-servlet file)))))))))
+    ;; (setq-local httpd-port org-roam-server-port)
+    ;; (setq-local httpd-host org-roam-server-host)
+    ;; (setq httpd-root org-roam-server-root)
+    ;; (httpd-start)
+
+    (ws-start
+     '(((:GET . "/current-buffer-data") . current-buffer-data)
+       ((:GET . "/roam-data") . roam-data)
+       ((:GET . "/network-vis-options") . network-vis-options)
+       ((:GET . ".*") . static-files))
+     org-roam-server-port
+     "*org-roam-server*")
+    ;; (let ((node-query `[:select [file titles] :from titles
+    ;;                             ,@(org-roam-graph--expand-matcher 'file t)]))
+    ;;   (org-roam--with-temp-buffer nil
+    ;;     (let ((nodes (org-roam-db-query node-query)))
+    ;;       (dotimes (idx (length nodes))
+    ;;         (let ((file (xml-escape-string (car (elt nodes idx)))))
+    ;;           (if (org-roam--org-roam-file-p file)
+    ;;               (eval (org-roam-server-html-servlet file))))))))
+    )
    (t
     (remove-hook 'post-command-hook #'org-roam-server-find-file-hook-function t)
     (remove-hook 'org-capture-after-finalize-hook #'org-roam-server-capture-servlet)
     (dolist (buf (org-roam--get-roam-buffers))
       (with-current-buffer buf
         (remove-hook 'post-command-hook #'org-roam-server-update-current-buffer t)))
-    (httpd-stop))))
+    ;;(httpd-stop)
+    ;; can stop just the one also
+    (ws-stop-all))))
 
 (defun org-roam-server-find-file-hook-function ()
   "If the current visited file is an `org-roam` file, update the current buffer."
@@ -352,37 +363,80 @@ DESCRIPTION is the shown attribute to the user if the image is not rendered."
     (add-hook 'post-command-hook #'org-roam-server-update-current-buffer nil t)
     (org-roam-server-update-current-buffer)))
 
-(defservlet* current-buffer-data text/event-stream (token)
-  (if org-roam-server-authenticate
-      (if (not (string= org-roam-server-token token))
-          (httpd-error httpd-current-proc 403)))
-  (insert (format "data: %s\n\n"
-                  (if (org-roam--org-roam-file-p
-                       (buffer-file-name org-roam-server-current-buffer))
-                      (car (last
-                            (split-string
-                             (org-roam--path-to-slug
-                              (buffer-name org-roam-server-current-buffer))
-                             "/")))
-                    ""))))
+(defun process-send-string--chunk (orig-fun &rest args)
+  "Break the string to be sent into chunks.
+This avoids some bug when sending long strings that causes a ^D
+character to be inserted. Breaking the string into chunks that
+are 200 chars long (arbitrary value) avoids the problem."
+  (let ((proc (nth 0 args))
+        (str (nth 1 args))
+        substr
+        (chunk-len 100000))
+    (while (> (length str) 0)
+      (setq substr (substring str 0 (min (length str) chunk-len)))
+      (funcall orig-fun proc substr)
+      (setq str (substring str (length substr) (length str))))))
 
-(defservlet* roam-data text/event-stream (force token)
-  (if org-roam-server-authenticate
-      (if (not (string= org-roam-server-token token))
-          (httpd-error httpd-current-proc 403)))
-  (let* ((node-query `[:select [titles:file titles tags] :from titles
-                               :left :outer :join tags :on (= titles:file tags:file)
-                               ,@(org-roam-graph--expand-matcher 'titles:file t)])
-         (data (org-roam-server-visjs-json node-query)))
-    (when (or force (not (string= data org-roam-server-data)))
-      (setq org-roam-server-data data)
-      (insert (format "data: %s\n\n" org-roam-server-data)))))
+(advice-add 'process-send-string :around #'process-send-string--chunk)
 
-(defservlet* network-vis-options application/json (token)
+(defun check-authentication (request)
   (if org-roam-server-authenticate
-      (if (not (string= org-roam-server-token token))
-          (httpd-error httpd-current-proc 403)))
-  (insert (or org-roam-server-network-vis-options "{}")))
+      (with-slots (process headers) request
+        (if (not (string= org-roam-server-token (oref headers token)))
+            (ws-response-header process 403)))))
+
+(defvar current-buffer-data-socket nil)
+
+(defun update-current-buffer-data ()
+  (process-send-string current-buffer-data-socket
+                       (ws-web-socket-frame
+                        (if (org-roam--org-roam-file-p
+                             (buffer-file-name org-roam-server-current-buffer))
+                            (car (last
+                                  (split-string
+                                   (org-roam--path-to-slug
+                                    (buffer-name org-roam-server-current-buffer))
+                                   "/")))
+                          ""))))
+
+(defun current-buffer-data (request)
+  (check-authentication request)
+  (with-slots (process) request
+    (ws-web-socket-connect request #'update-current-buffer-data)
+    (prog1 :keep-alive (setq current-buffer-data-socket process))))
+
+(defun get-roam-data ()
+  (org-roam-server-visjs-json `[:select [titles:file titles tags] :from titles
+                                        :left :outer :join tags :on (= titles:file tags:file)
+                                        ,@(org-roam-graph--expand-matcher 'titles:file t)]))
+
+(defvar roam-data-socket nil)
+
+(defun update-roam-data ()
+  (process-send-string roam-data-socket (get-roam-data)))
+
+(defun roam-data (request)
+  (check-authentication request)
+  (with-slots (process) request
+    (if (ws-web-socket-connect request #'update-roam-data)
+        (setq roam-data-socket process)))
+  :keep-alive)
+
+(defun network-vis-options (request)
+  (check-authentication request)
+  (with-slots (process) request
+    (ws-response-header process 200 '("Content-Type" . "application/json"))
+    (process-send-string process (or org-roam-server-network-vis-options "{}"))))
+
+(defun static-files (request)
+  (with-slots (process headers) request
+    (let* ((path (substring (cdr (assoc :GET headers)) 1))
+           (expanded-path (expand-file-name path org-roam-server-root)))
+      (if (ws-in-directory-p org-roam-server-root path)
+          (if (file-directory-p path)
+              (ws-send-file process (concat expanded-path "/index.html"))
+            (ws-send-file process expanded-path))
+        (ws-send-404 process)))))
 
 (defun org-roam-server-insert-title (title)
   "Insert the TITLE as `org-document-title`."
@@ -441,26 +495,26 @@ DESCRIPTION is the shown attribute to the user if the image is not rendered."
                     (insert "\n\n"))))))
         (insert "\n\n* No backlinks!"))))
 
-(defservlet* org-roam-buffer text/html (path label token)
-  (if org-roam-server-authenticate
-      (if (not (string= org-roam-server-token token))
-          (httpd-error httpd-current-proc 403)))
-  (if (and path label)
-      (let ((source-org-roam-directory org-roam-directory)
-            (html-string))
-        (with-temp-buffer
-          (erase-buffer)
-          (setq-local org-roam-directory source-org-roam-directory)
-          (setq-local default-directory source-org-roam-directory)
-          (setq-local org-html-style-default org-roam-server-export-style)
-          (setq-local org-export-with-toc nil)
-          (setq-local org-export-with-section-numbers nil)
-          (setq-local org-export-with-sub-superscripts nil)
-          (org-roam-server-insert-title label)
-          (org-roam-server-insert-backlinks path)
-          (org-roam-server-insert-citelinks path)
-          (setq html-string (org-export-as 'html)))
-        (insert html-string))))
+;; (defservlet* org-roam-buffer text/html (path label token)
+;;   (if org-roam-server-authenticate
+;;       (if (not (string= org-roam-server-token token))
+;;           (httpd-error httpd-current-proc 403)))
+;;   (if (and path label)
+;;       (let ((source-org-roam-directory org-roam-directory)
+;;             (html-string))
+;;         (with-temp-buffer
+;;           (erase-buffer)
+;;           (setq-local org-roam-directory source-org-roam-directory)
+;;           (setq-local default-directory source-org-roam-directory)
+;;           (setq-local org-html-style-default org-roam-server-export-style)
+;;           (setq-local org-export-with-toc nil)
+;;           (setq-local org-export-with-section-numbers nil)
+;;           (setq-local org-export-with-sub-superscripts nil)
+;;           (org-roam-server-insert-title label)
+;;           (org-roam-server-insert-backlinks path)
+;;           (org-roam-server-insert-citelinks path)
+;;           (setq html-string (org-export-as 'html)))
+;;         (insert html-string))))
 
 (provide 'org-roam-server)
 
